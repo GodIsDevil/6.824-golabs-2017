@@ -1,6 +1,13 @@
 package mapreduce
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+)
+
+const RpcName = "Worker.DoTask"
+
+const MaxWorkerFailures = 5
 
 //
 // schedule() starts and waits for all tasks in the given phase (Map
@@ -25,12 +32,51 @@ func schedule(jobName string, mapFiles []string, nReduce int, phase jobPhase, re
 
 	fmt.Printf("Schedule: %v %v tasks (%d I/Os)\n", ntasks, phase, n_other)
 
-	// All ntasks tasks have to be scheduled on workers, and only once all of
-	// them have been completed successfully should the function return.
-	// Remember that workers may fail, and that any given worker may finish
-	// multiple tasks.
-	//
-	// TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO
-	//
+	taskChannel := make(chan int, ntasks)
+	go func(taskSize int) {
+		for i := 0; i < taskSize; i++ {
+			taskChannel <- i
+		}
+	}(ntasks)
+
+	var waitGroup sync.WaitGroup
+	waitGroup.Add(ntasks)
+
+	done := make(chan string)
+	go func() {
+		waitGroup.Wait()
+		close(taskChannel)
+		done <- "true"
+	}()
+
+DONE:
+	for {
+		select {
+		case workerRpcAddress := <-registerChan:
+			{
+				go func(workerRpcAddress string) {
+					failureCounts := 0
+					for taskNumber := range taskChannel {
+						doTaskArgs := DoTaskArgs{JobName: jobName, File: mapFiles[taskNumber], Phase: phase,
+							TaskNumber: taskNumber, NumOtherPhase: n_other}
+						ok := call(workerRpcAddress, RpcName, doTaskArgs, nil)
+						if ok {
+							waitGroup.Done()
+						} else {
+							taskChannel <- taskNumber
+							failureCounts++
+							if failureCounts >= MaxWorkerFailures {
+								fmt.Printf("Schedule: %v, Worker %s failed %d times and will no longer be used\n", phase, workerRpcAddress, MaxWorkerFailures)
+								break
+							}
+						}
+					}
+				}(workerRpcAddress)
+			}
+		case <-done:
+			break DONE
+		}
+	}
 	fmt.Printf("Schedule: %v phase done\n", phase)
+
 }

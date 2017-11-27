@@ -2,13 +2,17 @@ package mapreduce
 
 import (
 	"hash/fnv"
+	"io/ioutil"
+	"encoding/json"
+	"os"
+	"sync"
 )
 
 // doMap manages one map task: it reads one of the input files
 // (inFile), calls the user-defined map function (mapF) for that file's
 // contents, and partitions the output into nReduce intermediate files.
 func doMap(
-	jobName string, // the name of the MapReduce job
+	jobName string,    // the name of the MapReduce job
 	mapTaskNumber int, // which map task this is
 	inFile string,
 	nReduce int, // the number of reduce task that will be run ("R" in the paper)
@@ -53,6 +57,55 @@ func doMap(
 	//
 	// Remember to close the file after you have written all the values!
 	//
+
+	contentBytes, readError := ioutil.ReadFile(inFile)
+	if readError != nil {
+		//todo 出错处理
+		return
+	}
+	//内容为空的话直接返回
+	if len(contentBytes) < 0 {
+		return
+	}
+	content := string(contentBytes)
+	keyValues := mapF(inFile, content)
+	keyValuePartitions := make(map[string][]KeyValue)
+
+	for _, keyValue := range keyValues {
+		intervalFileName := reduceName(jobName, mapTaskNumber, ihash(keyValue.Key)%nReduce)
+		keyValuePartitions[intervalFileName] = append(keyValuePartitions[intervalFileName], keyValue)
+	}
+	//for key, value := range keyValuePartitions {
+	//	file, err := os.Create(key)
+	//	if err != nil {
+	//		return
+	//	}
+	//	enc := json.NewEncoder(file)
+	//	for _, kv := range value {
+	//		enc.Encode(kv)
+	//	}
+	//	file.Close()
+	//}
+
+	//TODO 多线程写并保证全部写完以后结束，如果中间出现问题咋办？
+	var fileWriteWaitGroup sync.WaitGroup
+	for key, value := range keyValuePartitions {
+		fileWriteWaitGroup.Add(1)
+		go func(fileName string, kvs []KeyValue) {
+			file, err := os.Create(fileName)
+			if err != nil {
+				fileWriteWaitGroup.Done()
+				return
+			}
+			enc := json.NewEncoder(file)
+			for _, kv := range kvs {
+				enc.Encode(kv)
+			}
+			file.Close()
+			fileWriteWaitGroup.Done()
+		}(key, value)
+	}
+	fileWriteWaitGroup.Wait()
 }
 
 func ihash(s string) int {

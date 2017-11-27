@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"mapreduce"
 	"os"
+	"unicode"
+	"strings"
+	"strconv"
 )
 
 //
@@ -15,6 +18,24 @@ import (
 //
 func mapF(filename string, contents string) []mapreduce.KeyValue {
 	// TODO: you have to write this function
+	words := splitStringToLetters(contents)
+	wordCounts := make(map[string]int)
+	for _, word := range words {
+		wordCounts[word] += 1
+	}
+	var kvs []mapreduce.KeyValue
+	for key, value := range wordCounts {
+		kvs = append(kvs, mapreduce.KeyValue{Key: key, Value: strconv.Itoa(value)})
+	}
+	return kvs
+}
+
+func splitStringToLetters(contents string) ([]string) {
+	return strings.FieldsFunc(contents, isWordSep)
+}
+
+func isWordSep(c rune) bool {
+	return !unicode.IsLetter(c)
 }
 
 //
@@ -24,6 +45,15 @@ func mapF(filename string, contents string) []mapreduce.KeyValue {
 //
 func reduceF(key string, values []string) string {
 	// TODO: you also have to write this function
+	var wordCount int
+	for _, countStr := range values {
+		count, err := strconv.Atoi(countStr)
+		if err != nil {
+			continue
+		}
+		wordCount += count
+	}
+	return strconv.Itoa(wordCount)
 }
 
 // Can be run in 3 ways:
