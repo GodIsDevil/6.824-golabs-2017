@@ -2,7 +2,6 @@ package mapreduce
 
 import (
 	"fmt"
-	"sync"
 )
 
 const RpcName = "Worker.DoTask"
@@ -39,18 +38,10 @@ func schedule(jobName string, mapFiles []string, nReduce int, phase jobPhase, re
 		}
 	}(ntasks)
 
-	var waitGroup sync.WaitGroup
-	waitGroup.Add(ntasks)
+	done := make(chan string, ntasks)
 
-	done := make(chan string)
-	go func() {
-		waitGroup.Wait()
-		close(taskChannel)
-		done <- "true"
-	}()
-
-DONE:
-	for {
+	remainTaskNumber := ntasks
+	for remainTaskNumber > 0 {
 		select {
 		case workerRpcAddress := <-registerChan:
 			{
@@ -61,7 +52,7 @@ DONE:
 							TaskNumber: taskNumber, NumOtherPhase: n_other}
 						ok := call(workerRpcAddress, RpcName, doTaskArgs, nil)
 						if ok {
-							waitGroup.Done()
+							done <- "done"
 						} else {
 							taskChannel <- taskNumber
 							failureCounts++
@@ -74,9 +65,11 @@ DONE:
 				}(workerRpcAddress)
 			}
 		case <-done:
-			break DONE
+			remainTaskNumber--
 		}
 	}
+	close(taskChannel)
+	close(done)
 	fmt.Printf("Schedule: %v phase done\n", phase)
 
 }
